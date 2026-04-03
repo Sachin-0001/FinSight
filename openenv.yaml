@@ -1,0 +1,13 @@
+name: financial-doc-env
+version: "1.0.0"
+description: "Financial document analysis environment for RL agent training"
+tags: [openenv, finance, document-analysis, compliance, real-world]
+tasks:
+  - name: anomaly_classification
+    difficulty: easy
+  - name: kpi_extraction
+    difficulty: medium
+  - name: compliance_assessment
+    difficulty: hard
+hardware: cpu-basic
+sdk: docker
