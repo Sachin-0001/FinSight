@@ -12,7 +12,7 @@ llm_client = OpenAI(
     api_key=os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY"),
 )
 model_name = os.environ.get("MODEL_NAME")
-env = FinancialDocEnv(base_url="http://localhost:8000")
+env = FinancialDocEnv(base_url=os.environ.get("FINANCIAL_ENV_BASE_URL", "http://localhost:7860"))
 
 observation = env.reset(task_name="compliance_assessment")
 

@@ -55,7 +55,12 @@ def health() -> Dict[str, str]:
 
 @app.get("/state")
 def get_state() -> Dict[str, Any]:
-    return FinancialDocEnvironment().state.model_dump()
+    return {
+        "environment": "financial-doc-env",
+        "version": "1.0.0",
+        "tasks": ["anomaly_classification", "kpi_extraction", "compliance_assessment"],
+        "status": "ready"
+    }
 
 
 @app.websocket("/ws")

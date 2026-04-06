@@ -10,12 +10,13 @@ load_dotenv()
 api_key = os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY", "")
 api_base = os.environ.get("API_BASE_URL", "https://api-inference.huggingface.co/v1")
 model_name = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+env_base_url = os.environ.get("FINANCIAL_ENV_BASE_URL", "http://localhost:7860")
 
 if not api_key:
     raise SystemExit("ERROR: set HF_TOKEN env var before running")
 
 llm_client = OpenAI(base_url=api_base, api_key=api_key)
-env = FinancialDocEnv(base_url="http://localhost:8000")
+env = FinancialDocEnv(base_url=env_base_url)
 
 # Reset and print the full document
 observation = env.reset(task_name="anomaly_classification")

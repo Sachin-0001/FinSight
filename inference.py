@@ -293,12 +293,24 @@ def _run_episode(env, llm_client, model_name, task_name) -> float:
 def main() -> None:
     load_dotenv()
 
+    def log_start(task, env_name, model):
+        print(f"[START] task={task} env={env_name} model={model}", flush=True)
+
+    def log_step(step, action, reward, done, error):
+        error_val = error if error else "null"
+        print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}", flush=True)
+
+    def log_end(success, steps, score, rewards):
+        rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+        print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+
     api_base_url = os.environ.get("API_BASE_URL", "https://api-inference.huggingface.co/v1")
     model_name = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
     hf_token = os.environ.get("HF_TOKEN", "")
+    env_base_url = os.environ.get("FINANCIAL_ENV_BASE_URL", "http://localhost:7860")
 
     llm_client = OpenAI(base_url=api_base_url, api_key=hf_token)
-    env = FinancialDocEnv(base_url="http://localhost:8000")
+    env = FinancialDocEnv(base_url=env_base_url)
 
     raw_scores: Dict[str, List[float]] = {
         "task_easy": [],
@@ -309,8 +321,42 @@ def main() -> None:
     for task_name in ["anomaly_classification", "kpi_extraction", "compliance_assessment"]:
         key = TASK_TO_KEY[task_name]
         for _ in range(5):
-            score = _run_episode(env=env, llm_client=llm_client, model_name=model_name, task_name=task_name)
+            log_start(task_name, "finsight", model_name)
+
+            error = None
+            done = False
+            reward = 0.0
+            step_rewards: List[float] = []
+            action_type = "recommend"
+
+            try:
+                observation = env.reset(task_name=task_name)
+                status, action = _llm_action(llm_client, model_name, observation)
+                if status == "parse_error":
+                    action = FinancialAction(
+                        action_type="recommend",
+                        value="",
+                        confidence=0.0,
+                        reasoning="Parse failure.",
+                    )
+                elif action is None:
+                    action = _heuristic_action(observation, task_name)
+
+                action_type = action.action_type
+                result = env.step(action)
+                reward_value = result.get("reward")
+                reward = float(reward_value) if isinstance(reward_value, (int, float)) else 0.0
+                done = bool(result.get("done", False))
+            except Exception as exc:  # noqa: BLE001
+                error = str(exc)
+
+            step_rewards.append(reward)
+            log_step(1, action_type, reward, done, error)
+
+            score = reward
+            success = error is None and score >= 0.5
             raw_scores[key].append(score)
+            log_end(success, 1, score, step_rewards)
 
     results = {
         "task_easy": {"mean": mean(raw_scores["task_easy"]) if raw_scores["task_easy"] else 0.0, "scores": raw_scores["task_easy"]},

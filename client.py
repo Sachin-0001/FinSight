@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 import httpx
@@ -10,8 +11,9 @@ StepResult = Dict[str, Any]
 
 
 class FinancialDocEnv:
-    def __init__(self, base_url: str = "http://localhost:8000") -> None:
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: Optional[str] = None) -> None:
+        resolved_base_url = base_url or os.environ.get("FINANCIAL_ENV_BASE_URL", "http://localhost:7860")
+        self.base_url = resolved_base_url.rstrip("/")
         self._pending_task: Optional[str] = None
         self._pending_seed: int = 0
         

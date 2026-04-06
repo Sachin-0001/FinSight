@@ -1,3 +1,16 @@
+---
+title: FinSight Financial Document OpenEnv
+emoji: 📊
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+tags:
+  - openenv
+  - finance
+  - reinforcement-learning
+  - document-analysis
+---
 # Financial Document OpenEnv Environment
 
 Financial document analysis is a high-impact, real-world workflow where analysts and auditors repeatedly triage noisy statements, extract decision-critical KPIs, and flag compliance risks under uncertainty. This environment turns that workflow into a reproducible RL-style benchmark with structured observations, typed actions, deterministic graders, and partial-credit rewards that encourage both correctness and calibrated confidence.
@@ -43,14 +56,14 @@ Financial document analysis is a high-impact, real-world workflow where analysts
 ```bash
 cd financial_env
 pip install -r requirements.txt
-uvicorn server.app:app --reload --port 8000
+uvicorn server.app:app --reload --host 0.0.0.0 --port 7860
 ```
 
 ### Docker
 
 ```bash
-docker build -t financial-env -f server/Dockerfile .
-docker run -d -p 8000:8000 financial-env
+docker build -t financial-env .
+docker run -d -p 7860:7860 financial-env
 ```
 
 ### Run baseline
@@ -59,6 +72,7 @@ docker run -d -p 8000:8000 financial-env
 export API_BASE_URL="https://api-inference.huggingface.co/v1"
 export MODEL_NAME="meta-llama/Llama-3.1-8B-Instruct"
 export HF_TOKEN="your_token_here"
+export FINANCIAL_ENV_BASE_URL="http://localhost:7860"
 python inference.py
 ```
 
@@ -68,13 +82,13 @@ Push the entire repository to a Hugging Face Space configured with SDK: docker.
 
 ## Baseline Scores
 
-After running `python inference.py`, scores are written to `results.json`.
+After running `python inference.py`, scores are written to `results.json`. The values below match the current checked-in artifact.
 
 | split | mean score | notes |
 |---|---:|---|
-| task_easy | 1.000 | Baseline run completed with API-first + fallback path |
-| task_medium | 1.000 | Baseline run completed with API-first + fallback path |
-| task_hard | 0.873 | Hard task remains comparatively more difficult |
+| task_easy | 0.616 | Current checked-in `results.json` mean |
+| task_medium | 0.750 | Current checked-in `results.json` mean |
+| task_hard | 0.352 | Current checked-in `results.json` mean |
 
 ## Example Loop
 
@@ -82,7 +96,7 @@ After running `python inference.py`, scores are written to `results.json`.
 from client import FinancialDocEnv
 from models import FinancialAction
 
-env = FinancialDocEnv("http://localhost:8000")
+env = FinancialDocEnv("http://localhost:7860")
 obs = env.reset(task_name="anomaly_classification")
 
 action = FinancialAction(
