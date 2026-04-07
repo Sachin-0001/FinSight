@@ -120,7 +120,9 @@ class FinancialDocEnvironment:
 
         self.step_count += 1
 
-        grader_score = grade_task(self._episode.task.name, action, self._episode.ground_truth)
+        grader_score = self._clamp_score(
+            grade_task(self._episode.task.name, action, self._episode.ground_truth)
+        )
         reward = grader_score
 
         if abs(action.confidence - grader_score) < 0.15:

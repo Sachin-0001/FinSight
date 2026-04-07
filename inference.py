@@ -7,6 +7,7 @@ from statistics import mean
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
+import httpx
 from openai import OpenAI
 
 from client import FinancialDocEnv
@@ -17,6 +18,24 @@ TASK_TO_KEY = {
     "kpi_extraction": "task_medium",
     "compliance_assessment": "task_hard",
 }
+
+
+def _open_interval_score(value: float, low: float = 0.001, high: float = 0.999) -> float:
+    """Clamp to strict open interval (0, 1)."""
+    return max(low, min(high, float(value)))
+
+
+def _assert_env_is_reachable(env_base_url: str) -> None:
+    """Fail fast for wrong host/port instead of silently writing zero scores."""
+    health_url = f"{env_base_url.rstrip('/')}/health"
+    try:
+        response = httpx.get(health_url, timeout=10.0)
+        response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"Cannot reach financial environment at {health_url}. "
+            "Start the server or set FINANCIAL_ENV_BASE_URL."
+        ) from exc
 
 
 def _json_extract(text: str) -> Dict[str, Any] | None:
@@ -309,6 +328,8 @@ def main() -> None:
     hf_token = os.environ.get("HF_TOKEN", "")
     env_base_url = os.environ.get("FINANCIAL_ENV_BASE_URL", "http://localhost:7860")
 
+    _assert_env_is_reachable(env_base_url)
+
     llm_client = OpenAI(base_url=api_base_url, api_key=hf_token)
     env = FinancialDocEnv(base_url=env_base_url)
 
@@ -350,6 +371,7 @@ def main() -> None:
             except Exception as exc:  # noqa: BLE001
                 error = str(exc)
 
+            reward = _open_interval_score(reward)
             step_rewards.append(reward)
             log_step(1, action_type, reward, done, error)
 
