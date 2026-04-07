@@ -5,13 +5,17 @@ description = "Financial document analysis environment for RL agent training"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi==0.115.0",
-  "uvicorn==0.30.6",
-  "pydantic==2.9.2",
-  "openai==1.51.2",
-  "python-dotenv==1.0.1",
-  "httpx==0.27.2",
+  "fastapi",
+  "uvicorn",
+  "pydantic",
+  "openai",
+  "python-dotenv",
+  "httpx",
+  "openenv-core>=0.2.0",
 ]
+
+[project.scripts]
+server = "server.app:app"
 
 [tool.uv]
 package = false
