@@ -40,6 +40,10 @@ class FinancialDocEnvironment:
         """Call this before reset() to pin the exact episode seed."""
         self._forced_episode_seed = seed
 
+    def _clamp_score(self, score: float) -> float:
+        """Ensure score is strictly between 0 and 1 (exclusive)."""
+        return max(0.001, min(0.999, score))
+
     def _pick_task(self, task_name: Optional[str], difficulty: Optional[str]) -> str:
         if task_name:
             if task_name not in TASKS:
@@ -110,7 +114,7 @@ class FinancialDocEnvironment:
                 max_steps=self.max_steps,
                 running_score=self._running_score,
                 done=True,
-                reward=0.0,
+                reward=self._clamp_score(0.0),
                 metadata={"task_name": self._episode.task.name, "episode_id": self.episode_id},
             )
 
@@ -126,7 +130,7 @@ class FinancialDocEnvironment:
         if self.step_count > 1:
             reward -= 0.1 * (self.step_count - 1)
 
-        reward = max(0.0, min(1.0, reward))
+        reward = self._clamp_score(reward)
         self._running_score = reward
         self.total_score += reward
         self.documents_processed += 1

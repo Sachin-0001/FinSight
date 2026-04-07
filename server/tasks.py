@@ -61,7 +61,12 @@ TASKS: Dict[str, TaskDefinition] = {
 }
 
 
-def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+def _clamp_score(score: float) -> float:
+    """Ensure score is strictly between 0 and 1 (exclusive)."""
+    return max(0.001, min(0.999, score))
+
+
+def _clamp(value: int, low: int = 0, high: int = 1) -> int:
     return max(low, min(high, value))
 
 
@@ -69,14 +74,14 @@ def _f1_strict(predicted: List[str], truth: List[str]) -> float:
     pred_set = {p.strip() for p in predicted if p and p.strip()}
     true_set = {t.strip() for t in truth if t and t.strip()}
     if not true_set:
-        return 1.0 if not pred_set else 0.0
+        return 1 if not pred_set else 0
     if not pred_set:
-        return 0.0
+        return 0
     tp = len(pred_set & true_set)
     precision = tp / len(pred_set)
     recall = tp / len(true_set)
     if precision + recall == 0:
-        return 0.0
+        return 0
     return (2 * precision * recall) / (precision + recall)
 
 
@@ -101,7 +106,8 @@ def grade_anomaly_classification(action: FinancialAction, ground_truth: Dict[str
     value = action.value.strip()
     predictions = [piece.strip() for piece in value.split(",") if piece.strip()]
     base = _f1_strict(predictions, list(ground_truth["anomaly_ids"]))
-    return _apply_global_quality_penalties(base, action)
+    raw_reward = _apply_global_quality_penalties(base, action)
+    return _clamp_score(raw_reward)
 
 
 def grade_kpi_extraction(action: FinancialAction, ground_truth: Dict[str, Any], seed: int) -> float:
@@ -140,7 +146,8 @@ def grade_kpi_extraction(action: FinancialAction, ground_truth: Dict[str, Any], 
         scores.append(metric_score)
 
     base = (sum(scores) / len(keys)) + invalid_penalty - (0.25 * missing_count)
-    return _apply_global_quality_penalties(_clamp(base), action)
+    raw_reward = _apply_global_quality_penalties(_clamp(base), action)
+    return _clamp_score(raw_reward)
 
 
 def _extract_issue_payload(value: str) -> Tuple[List[Dict[str, Any]], int]:
@@ -232,7 +239,8 @@ def grade_compliance_assessment(action: FinancialAction, ground_truth: Dict[str,
     red_herring_penalty = -0.15 * len(red_herring_flags)
 
     base = _clamp(f1_like + hallucination_penalty + red_herring_penalty)
-    return _apply_global_quality_penalties(base, action)
+    raw_reward = _apply_global_quality_penalties(base, action)
+    return _clamp_score(raw_reward)
 
 
 def generate_task_instance(task_name: str, seed: int) -> Dict[str, Any]:
