@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -97,3 +98,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "error", "error": "Unsupported message type."})
     except WebSocketDisconnect:
         return
+    
+def main():
+      import uvicorn
+      port = int(os.environ.get("PORT", 7860))
+      uvicorn.run("server.app:app", host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    main()
