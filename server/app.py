@@ -21,7 +21,9 @@ app = FastAPI(title="Financial Document OpenEnv")
 
 
 @app.post("/reset")
-def reset_environment(payload: ResetRequest) -> Dict[str, Any]:
+def reset_environment(payload: ResetRequest = None) -> Dict[str, Any]:
+    if payload is None:
+        payload = ResetRequest()
     try:
         env = FinancialDocEnvironment()
         obs = env.reset(task_name=payload.task_name, difficulty=payload.difficulty)
