@@ -80,16 +80,6 @@ python inference.py
 
 Push the entire repository to a Hugging Face Space configured with SDK: docker.
 
-## Baseline Scores
-
-After running `python inference.py`, scores are written to `results.json`. The values below match the current checked-in artifact.
-
-| split | mean score | notes |
-|---|---:|---|
-| task_easy | 0.616 | Current checked-in `results.json` mean |
-| task_medium | 0.750 | Current checked-in `results.json` mean |
-| task_hard | 0.352 | Current checked-in `results.json` mean |
-
 ## Example Loop
 
 ```python
