@@ -27,16 +27,34 @@ class EpisodeStateRequest(BaseModel):
     episode_id: Optional[str] = None
 
 
-def _attach_step_info(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """OpenEnv-style ``info`` alongside the flat observation JSON."""
+def _wrap_openenv_response(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrap a flat observation dict into the OpenEnv-standard response envelope.
+
+    The OpenEnv HTTPEnvClient._parse_result() expects:
+        {"observation": {...}, "reward": <float|None>, "done": <bool>}
+
+    We also keep all fields at the top level for backward compatibility with
+    the existing FinancialDocEnv client (client.py) and inference.py.
+    """
     meta = payload.get("metadata") or {}
     rb = meta.get("reward_breakdown")
-    payload["info"] = {
+    info = {
         "reward_breakdown": rb,
         "episode_phase": meta.get("episode_phase"),
         "running_score": payload.get("running_score"),
     }
-    return payload
+    # Observation sub-object: all fields except reward/done (those go to top level)
+    observation = {k: v for k, v in payload.items() if k not in ("reward", "done")}
+    observation["info"] = info
+    return {
+        # ---- OpenEnv standard envelope ----
+        "observation": observation,
+        "reward": payload.get("reward"),
+        "done": payload.get("done", False),
+        # ---- Flat fields for backward compat ----
+        **payload,
+        "info": info,
+    }
 
 
 app = FastAPI(title="Financial Document OpenEnv")
@@ -70,7 +88,7 @@ def reset_environment(payload: ResetRequest = None) -> Dict[str, Any]:
         data["metadata"]["episode_seed"] = env.last_episode_seed
         _EPISODES[env.episode_id] = env
         _EPISODE_LAST_TOUCH[env.episode_id] = time.time()
-        return _attach_step_info(data)
+        return _wrap_openenv_response(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -91,7 +109,7 @@ def step_environment(payload: StepRequest) -> Dict[str, Any]:
             if obs.done:
                 _EPISODES.pop(payload.episode_id, None)
                 _EPISODE_LAST_TOUCH.pop(payload.episode_id, None)
-            return _attach_step_info(data)
+            return _wrap_openenv_response(data)
 
         # Backward-compatible mode: stateless replay with task_name + episode_seed.
         if not payload.task_name or payload.episode_seed is None:
@@ -101,7 +119,7 @@ def step_environment(payload: StepRequest) -> Dict[str, Any]:
         env.force_episode_seed(payload.episode_seed)
         env.reset(task_name=payload.task_name)
         obs = env.step(payload.action)
-        return _attach_step_info(obs.model_dump())
+        return _wrap_openenv_response(obs.model_dump())
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -166,7 +184,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     )
                     _EPISODES[env.episode_id] = env
                     _EPISODE_LAST_TOUCH[env.episode_id] = time.time()
-                    await websocket.send_json({"type": "observation", "data": _attach_step_info(obs.model_dump())})
+                    await websocket.send_json({"type": "observation", "data": _wrap_openenv_response(obs.model_dump())})
                 except ValueError as exc:
                     await websocket.send_json({"type": "error", "error": str(exc)})
             elif msg_type == "state":
@@ -194,7 +212,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if obs.done:
                         _EPISODES.pop(env.episode_id, None)
                         _EPISODE_LAST_TOUCH.pop(env.episode_id, None)
-                    await websocket.send_json({"type": "observation", "data": _attach_step_info(obs.model_dump())})
+                    await websocket.send_json({"type": "observation", "data": _wrap_openenv_response(obs.model_dump())})
                 except Exception as exc:
                     await websocket.send_json({"type": "error", "error": str(exc)})
             else:
