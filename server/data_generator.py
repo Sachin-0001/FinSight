@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from random import Random
 from typing import Dict, List, Sequence, Tuple
 
@@ -14,7 +14,9 @@ COMPANY_NAMES: Sequence[str] = (
     "Atlas Ridge Foods",
 )
 
-CURRENCIES: Sequence[str] = ("USD", "EUR", "GBP")
+# FIX #7: Lock to USD only — inference prompts are USD-specific.
+# Multi-currency support requires grader + prompt awareness; out of scope here.
+CURRENCIES: Sequence[str] = ("USD",)
 
 ISSUE_CATALOG: Dict[str, Tuple[str, str]] = {
     "debt_covenant_breach_risk": (
@@ -67,13 +69,29 @@ ISSUE_CATALOG: Dict[str, Tuple[str, str]] = {
     ),
 }
 
-RED_HERRING_ISSUES: Dict[str, str] = {
-    "approved_related_party_lease": (
-        "Related-party lease is fully disclosed, independently benchmarked, and approved by the audit committee."
-    ),
-    "temporary_margin_decline": (
-        "Gross margin dipped due to one-time freight shocks and normalized in the subsequent quarter."
-    ),
+# FIX #8: Multiple variants per red herring so they aren't memorisable after one run.
+RED_HERRING_POOL: List[str] = [
+    "Related-party lease is fully disclosed, independently benchmarked, and approved by the audit committee.",
+    "Gross margin dipped due to one-time freight shocks and normalized in the subsequent quarter.",
+    "The intercompany loan was repriced to market rates following an independent third-party valuation.",
+    "Foreign-exchange losses in H1 were fully offset by hedging gains recognised in the same period.",
+    "The deferred tax asset was reviewed and confirmed recoverable based on updated three-year profit forecasts.",
+    "Capital expenditure spike in Q3 relates to a pre-approved plant upgrade disclosed in the prior-year filing.",
+]
+
+RED_HERRING_COMPLIANT_NARRATIVE: Dict[str, str] = {
+    "debt_covenant_breach_risk": "Covenant headroom remains above lender thresholds after stress testing.",
+    "related_party_transactions": "Related-party activity is fully disclosed and independently benchmarked.",
+    "revenue_recognition_irregularity": "Revenue cut-off exceptions were tested and resolved before close.",
+    "inventory_valuation_concern": "Inventory reserve assumptions are consistent with prior policy and auditor review.",
+    "liquidity_deterioration_trend": "Short-term liquidity metrics improved in the latest quarter with disclosed actions.",
+    "cash_flow_debt_mismatch": "Debt service coverage remains supported by stable operating cash conversion.",
+    "hedged_disclosure_weakness": "Hedging note includes notional amounts and effectiveness metrics.",
+    "contingent_liability_understatement": "Contingent liability accruals reconcile to third-party engineering estimates.",
+    "off_balance_sheet_commitment": "Purchase commitments are clearly disclosed and reflected in leverage monitoring.",
+    "tax_provision_uncertainty": "Tax assumptions were independently reviewed and supported by current rulings.",
+    "goodwill_impairment_delay": "Impairment testing was completed on schedule with no triggering events identified.",
+    "going_concern_signal": "Refinancing facilities are executed and available through the planning horizon.",
 }
 
 VENDOR_PROFILES: List[Tuple[str, str, Tuple[float, float]]] = [
@@ -84,6 +102,47 @@ VENDOR_PROFILES: List[Tuple[str, str, Tuple[float, float]]] = [
     ("Apex Distribution", "distribution", (1200.0, 6200.0)),
     ("Northbank Advisory", "professional_services", (500.0, 2600.0)),
 ]
+
+# FIX #2 (compliance): Narrative templates keyed by issue type.
+# Only issues that were seeded will appear in the rendered document.
+ISSUE_NARRATIVE_TEMPLATES: Dict[str, str] = {
+    "debt_covenant_breach_risk": (
+        "Net debt to EBITDA covenant test should be evaluated against the 3.5x threshold in the latest year."
+    ),
+    "related_party_transactions": (
+        "Procurement concentration with affiliates increased, with mixed disclosure quality across committees."
+    ),
+    "revenue_recognition_irregularity": (
+        "Management believes controls around revenue cut-off remain effective despite quarter-end override requests."
+    ),
+    "inventory_valuation_concern": (
+        "Reserve methodology changes were introduced after reporting close and documented post-facto."
+    ),
+    "liquidity_deterioration_trend": (
+        "Current ratio has deteriorated each year over the observation window with no remediation plan disclosed."
+    ),
+    "cash_flow_debt_mismatch": (
+        "Operating cash generation weakened while total debt obligations continued to expand."
+    ),
+    "hedged_disclosure_weakness": (
+        "Footnotes reference hedging arrangements without quantifying hedge effectiveness or notional exposure."
+    ),
+    "contingent_liability_understatement": (
+        "Environmental remediation accruals appear inconsistent with independent engineering cost estimates."
+    ),
+    "off_balance_sheet_commitment": (
+        "Take-or-pay supplier commitments may indicate off-balance-sheet leverage pressure."
+    ),
+    "tax_provision_uncertainty": (
+        "Tax provision inputs changed in a period when multiple jurisdictional audits remain unresolved."
+    ),
+    "goodwill_impairment_delay": (
+        "Goodwill impairment indicators are present in the largest reporting segment but no test was disclosed."
+    ),
+    "going_concern_signal": (
+        "Management states refinancing confidence remains high despite incomplete lender commitments."
+    ),
+}
 
 
 def _fmt_money(amount: float, currency: str) -> str:
@@ -98,20 +157,25 @@ def _pick_currency(rng: Random) -> str:
     return CURRENCIES[rng.randrange(0, len(CURRENCIES))]
 
 
+# ---------------------------------------------------------------------------
+# TRANSACTION LOG
+# ---------------------------------------------------------------------------
+
 def build_transaction_case(seed: int, num_anomalies: int = 4) -> Dict[str, object]:
     rng = Random(seed)
     company = _pick_company(rng)
     currency = _pick_currency(rng)
     start = datetime(2025, rng.randint(1, 10), rng.randint(1, 20), 8, 0, 0)
     line_count = rng.randint(25, 30)
-    rows: List[Dict[str, object]] = []
 
+    rows: List[Dict[str, object]] = []
     for i in range(line_count):
         tx_id = f"TX-{seed % 1000:03d}-{i + 1:02d}"
         tx_time = start + timedelta(minutes=45 * i)
         vendor_name, vendor_category, (low, high) = rng.choice(VENDOR_PROFILES)
         amount = round(rng.uniform(low, high), 2)
         entry_type = "credit" if rng.random() > 0.4 else "debit"
+        # FIX #6: No "note" key on normal rows — avoids KeyError on render.
         rows.append(
             {
                 "id": tx_id,
@@ -120,14 +184,6 @@ def build_transaction_case(seed: int, num_anomalies: int = 4) -> Dict[str, objec
                 "counterparty": vendor_name,
                 "vendor_category": vendor_category,
                 "amount": amount,
-                "note": rng.choice(
-                    [
-                        "routine settlement",
-                        "monthly operating expense",
-                        "contracted service charge",
-                        "inventory replenishment",
-                    ]
-                ),
             }
         )
 
@@ -135,48 +191,61 @@ def build_transaction_case(seed: int, num_anomalies: int = 4) -> Dict[str, objec
     anomaly_ids: List[str] = []
     distractor_ids: List[str] = []
 
+    # --- Anomaly 1: Near-duplicate (same vendor, amount +$0.10, close timestamps) ---
     duplicate_anchor_idx = rng.randrange(4, line_count - 5)
     duplicate_row = rows[duplicate_anchor_idx]
     duplicate_target_idx = duplicate_anchor_idx + 1
     rows[duplicate_target_idx]["counterparty"] = duplicate_row["counterparty"]
     rows[duplicate_target_idx]["vendor_category"] = duplicate_row["vendor_category"]
     rows[duplicate_target_idx]["amount"] = round(float(duplicate_row["amount"]) + 0.10, 2)
-    rows[duplicate_target_idx]["note"] = "possible duplicate invoice split adjustment"
+    # FIX #1: No note written here. The grader uses server-side anomaly_ids ground truth.
     anomaly_ids.append(str(rows[duplicate_target_idx]["id"]))
 
+    # --- Anomaly 2: Threshold-hugging ($4,999 just under $5,000 approval limit) ---
     threshold_vendor = rng.choice(["Prime Vendor Co", "Zenith Materials", "Apex Distribution"])
-    threshold_indices = rng.sample([i for i in range(line_count) if i not in [duplicate_anchor_idx, duplicate_target_idx]], k=2)
+    used_indices = {duplicate_anchor_idx, duplicate_target_idx}
+    threshold_k = 2 if anomaly_count >= 5 else 1
+    threshold_indices = rng.sample([i for i in range(line_count) if i not in used_indices], k=threshold_k)
     for idx in threshold_indices:
         rows[idx]["counterparty"] = threshold_vendor
         rows[idx]["vendor_category"] = "distribution"
         rows[idx]["amount"] = 4999.00
-        rows[idx]["note"] = "regional promo authorization"
+        # FIX #1: No note.
         anomaly_ids.append(str(rows[idx]["id"]))
+        used_indices.add(idx)
 
+    # --- Anomaly 3: Velocity cluster (3 rapid Oakline transactions in <2 hours) ---
     velocity_vendor = "Oakline Transport"
     velocity_start_idx = rng.randrange(2, line_count - 3)
+    # FIX #3: Enforce strictly ascending timestamps so the pattern is visible.
+    base_ts = start + timedelta(minutes=rng.randint(0, 60))
     for j in range(3):
         idx = velocity_start_idx + j
-        ts = start + timedelta(minutes=rng.randint(0, 110))
+        ts = base_ts + timedelta(minutes=j * rng.randint(5, 25))
         rows[idx]["timestamp"] = ts.strftime("%Y-%m-%d %H:%M")
         rows[idx]["counterparty"] = velocity_vendor
         rows[idx]["vendor_category"] = "logistics"
         rows[idx]["amount"] = round(rng.uniform(2100.0, 2800.0), 2)
-        rows[idx]["note"] = "expedite routing surcharge"
-    rows[velocity_start_idx + 2]["note"] = "negative timing gap in rapid vendor postings"
+        # FIX #1: No note on any velocity row.
+        used_indices.add(idx)
+    # Only the last velocity row is the flagged anomaly ID.
     anomaly_ids.append(str(rows[velocity_start_idx + 2]["id"]))
 
-    office_idx = rng.randrange(0, line_count)
+    # --- Anomaly 4: Category mismatch (office_supplies transaction >$5,000) ---
+    office_candidates = [i for i in range(line_count) if i not in used_indices]
+    office_idx = rng.choice(office_candidates)
     rows[office_idx]["counterparty"] = "Metro Office Supply"
     rows[office_idx]["vendor_category"] = "office_supplies"
     rows[office_idx]["amount"] = 12000.00
-    rows[office_idx]["note"] = "bulk stationery refresh"
+    # FIX #1: No note.
     anomaly_ids.append(str(rows[office_idx]["id"]))
+    used_indices.add(office_idx)
 
-    distractor_candidates = [i for i in range(line_count) if str(rows[i]["id"]) not in anomaly_ids]
-    for idx in rng.sample(distractor_candidates, k=3):
+    # --- Distractors: large-amount but approved transactions ---
+    distractor_candidates = [i for i in range(line_count) if i not in used_indices]
+    for idx in rng.sample(distractor_candidates, k=min(3, len(distractor_candidates))):
         rows[idx]["amount"] = round(rng.uniform(6800.0, 9400.0), 2)
-        rows[idx]["note"] = "quarter-end approved capex settlement"
+        # FIX #1: No note on distractors either.
         rows[idx]["vendor_category"] = "raw_materials"
         distractor_ids.append(str(rows[idx]["id"]))
 
@@ -184,7 +253,7 @@ def build_transaction_case(seed: int, num_anomalies: int = 4) -> Dict[str, objec
         "company": company,
         "currency": currency,
         "rows": rows,
-        "anomaly_ids": sorted(set(anomaly_ids))[:anomaly_count],
+        "anomaly_ids": list(dict.fromkeys(anomaly_ids))[:anomaly_count],
         "distractor_ids": distractor_ids,
     }
 
@@ -201,38 +270,42 @@ def generate_transaction_log(seed: int, num_anomalies: int = 4) -> str:
         "Control guidance: not all unusual entries are anomalous; validate context with vendor category and timing.",
         "",
     ]
+
     if header_style == "|":
-        lines.append("tx_id | timestamp | type | counterparty | vendor_category | amount | note")
+        # FIX #6: Render without note column. Use row.get() for safety.
+        lines.append("tx_id | timestamp | type | counterparty | vendor_category | amount")
         lines.append("-" * 78)
         for row in rows:
             lines.append(
-                "{id} | {timestamp} | {type} | {counterparty} | {vendor_category} | {amount} | {note}".format(
+                "{id} | {timestamp} | {type} | {counterparty} | {vendor_category} | {amount}".format(
                     id=row["id"],
                     timestamp=row["timestamp"],
                     type=row["type"],
                     counterparty=row["counterparty"],
                     vendor_category=row["vendor_category"],
                     amount=_fmt_money(float(row["amount"]), str(case["currency"])),
-                    note=row["note"],
                 )
             )
     else:
-        lines.append("tx_id,timestamp,type,counterparty,vendor_category,amount,note")
+        lines.append("tx_id,timestamp,type,counterparty,vendor_category,amount")
         lines.append("-" * 78)
         for row in rows:
             lines.append(
-                "{id},{timestamp},{type},{counterparty},{vendor_category},{amount},{note}".format(
+                "{id},{timestamp},{type},{counterparty},{vendor_category},{amount}".format(
                     id=row["id"],
                     timestamp=row["timestamp"],
                     type=row["type"],
                     counterparty=row["counterparty"],
                     vendor_category=row["vendor_category"],
                     amount=_fmt_money(float(row["amount"]), str(case["currency"])),
-                    note=row["note"],
                 )
             )
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# INCOME STATEMENT
+# ---------------------------------------------------------------------------
 
 def build_income_statement_case(seed: int) -> Dict[str, object]:
     rng = Random(seed)
@@ -276,7 +349,10 @@ def build_income_statement_case(seed: int) -> Dict[str, object]:
             "revenue": round(revenue_k * unit_multiplier, 2),
             "cogs": round(cogs_k * unit_multiplier, 2),
             "gross_profit": round(gross_profit_k * unit_multiplier, 2),
+            # FIX #5: Store ebitda_k separately so grader can compare in thousands
+            # without relying on the full-USD value divided back down.
             "ebitda": round(ebitda_k * unit_multiplier, 2),
+            "ebitda_k": ebitda_k,
             "net_income": round(net_income_k * unit_multiplier, 2),
             "operating_income_k": operating_income_k,
             "dep_k": dep_k,
@@ -336,7 +412,9 @@ def generate_income_statement(seed: int) -> str:
             "Derived KPI: EBITDA = operating income + depreciation + amortization + add-back",
             "",
             "Bottom-line movements (USD thousands):",
-            f"Income after financing costs...... USD {restated['ebitda'] / 1000 - restated['interest_k']:,.2f}",
+            # FIX #5: Use ebitda_k directly (not restated['ebitda']/1000) to avoid
+            # floating-point drift between stored value and rendered value.
+            f"Income after financing costs...... USD {restated['ebitda_k'] - restated['interest_k']:,.2f}",
             f"Net earnings attributable......... USD {restated['net_income'] / 1000:,.2f}",
             "",
             "Supplementary non-KPI disclosures:",
@@ -348,6 +426,10 @@ def generate_income_statement(seed: int) -> str:
     )
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# BALANCE SHEET + COMPLIANCE
+# ---------------------------------------------------------------------------
 
 def build_balance_sheet_issue_case(seed: int, issue_types: Sequence[str]) -> Dict[str, object]:
     rng = Random(seed)
@@ -386,14 +468,22 @@ def build_balance_sheet_issue_case(seed: int, issue_types: Sequence[str]) -> Dic
         severity, desc = ISSUE_CATALOG[issue_type]
         issues.append({"type": issue_type, "severity": severity, "description": desc})
 
-    red_herrings = list(RED_HERRING_ISSUES.keys())
-    rng.shuffle(red_herrings)
+    pool_copy = list(RED_HERRING_POOL)
+    rng.shuffle(pool_copy)
+    selected_red_herrings = pool_copy[:2]
+
+    non_issue_types = [issue for issue in ISSUE_CATALOG if issue not in set(issue_types)]
+    rng.shuffle(non_issue_types)
+    red_herring_slugs = non_issue_types[:2]
 
     return {
         "company": _pick_company(rng),
         "rows": rows,
         "issues": issues,
-        "red_herrings": red_herrings[:2],
+        "red_herrings": selected_red_herrings,
+        "red_herring_slugs": red_herring_slugs,
+        # Pass issue_types through so generate_ can build the narrative.
+        "issue_types": list(issue_types),
     }
 
 
@@ -426,21 +516,31 @@ def generate_balance_sheet_with_issues(seed: int, issue_types: Sequence[str]) ->
                 f"Current Liabilities USD {row['current_liabilities']:,.2f}."
             )
 
+    # FIX #2: Build compliance narrative ONLY from seeded issue_types.
+    # No issue type that wasn't seeded will appear in the document.
+    narrative_bullets = []
+    for issue_type in case["issue_types"]:  # type: ignore[index]
+        template = ISSUE_NARRATIVE_TEMPLATES.get(issue_type)
+        if template:
+            narrative_bullets.append(f"- {template}")
+
     lines.extend(
         [
             "",
             "Compliance and audit narrative:",
-            "- Year-over-year leverage increased while EBITDA trajectory weakened relative to debt service burden.",
-            "- Procurement concentration with affiliates increased, with mixed disclosure quality across committees.",
-            "- Management believes controls around revenue cut-off remain effective despite quarter-end override requests.",
-            "- Reserve methodology changes were introduced after reporting close and documented post-facto.",
-            "- Net debt to EBITDA covenant test should be evaluated against 3.5x threshold in latest year.",
-            "- Take-or-pay supplier commitments may indicate off-balance-sheet leverage pressure.",
-            "- Management states refinancing confidence remains high despite incomplete lender commitments.",
+        ]
+    )
+    lines.extend(narrative_bullets)
+
+    # FIX #8: Red herrings now vary per seed.
+    lines.extend(
+        [
             "",
             "Potentially confusing but compliant observations:",
-            f"- {RED_HERRING_ISSUES[case['red_herrings'][0]]}",  # type: ignore[index]
-            f"- {RED_HERRING_ISSUES[case['red_herrings'][1]]}",  # type: ignore[index]
+            f"- {case['red_herrings'][0]}",  # type: ignore[index]
+            f"- {case['red_herrings'][1]}",  # type: ignore[index]
+            f"- {RED_HERRING_COMPLIANT_NARRATIVE.get(case['red_herring_slugs'][0], 'Control testing confirmed compliant treatment.')}",  # type: ignore[index]
+            f"- {RED_HERRING_COMPLIANT_NARRATIVE.get(case['red_herring_slugs'][1], 'Disclosures indicate compliant accounting treatment.')}",  # type: ignore[index]
             "",
             "Analyst instruction: identify only material compliance risk issue types present.",
         ]

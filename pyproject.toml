@@ -17,5 +17,12 @@ dependencies = [
 [project.scripts]
 server = "server.app:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from random import Random
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from models import FinancialAction, FinancialObservation, FinancialState
+from models import FinancialAction, FinancialObservation, FinancialReward, FinancialState
 from server.tasks import TASKS, TaskDefinition, generate_task_instance, grade_task
 
 
@@ -35,14 +36,23 @@ class FinancialDocEnvironment:
         self._episode: Optional[EpisodeContext] = None
         self._done = False
         self._running_score = 0.0
+        self._episode_reward_sum = 0.0
 
     def force_episode_seed(self, seed: int) -> None:
         """Call this before reset() to pin the exact episode seed."""
         self._forced_episode_seed = seed
 
-    def _clamp_score(self, score: float) -> float:
-        """Ensure score is strictly between 0 and 1 (exclusive)."""
-        return max(0.001, min(0.999, score))
+    def _bound_score(self, score: float) -> float:
+        """Ensure score is between 0 and 1 (inclusive)."""
+        return max(0.0, min(1.0, score))
+
+    def _include_debug_metadata(self) -> bool:
+        return os.getenv("FINANCIAL_ENV_DEBUG_METADATA", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def _pick_task(self, task_name: Optional[str], difficulty: Optional[str]) -> str:
         if task_name:
@@ -73,8 +83,10 @@ class FinancialDocEnvironment:
         self.task_difficulty = task.difficulty
         self.step_count = 0
         self._running_score = 0.0
+        self._episode_reward_sum = 0.0
         self._done = False
-        self.max_possible_score += 1.0
+        # One point at stake for the current episode; do not increment on abandoned resets.
+        self.max_possible_score = float(self.documents_processed + 1)
 
         self._episode = EpisodeContext(
             task=task,
@@ -95,7 +107,12 @@ class FinancialDocEnvironment:
             running_score=self._running_score,
             done=False,
             reward=None,
-            metadata={"task_name": task.name, "episode_id": self.episode_id},
+            metadata={
+                "task_name": task.name,
+                "episode_id": self.episode_id,
+                "reward_breakdown": None,
+                "episode_phase": "awaiting_action",
+            },
         )
 
     def step(self, action: FinancialAction) -> FinancialObservation:
@@ -114,29 +131,51 @@ class FinancialDocEnvironment:
                 max_steps=self.max_steps,
                 running_score=self._running_score,
                 done=True,
-                reward=self._clamp_score(0.0),
-                metadata={"task_name": self._episode.task.name, "episode_id": self.episode_id},
+                reward=0.0,
+                metadata={
+                    "task_name": self._episode.task.name,
+                    "episode_id": self.episode_id,
+                    "reward_breakdown": None,
+                    "episode_phase": "terminal",
+                },
             )
 
         self.step_count += 1
 
-        grader_score = self._clamp_score(
+        grader_score = self._bound_score(
             grade_task(self._episode.task.name, action, self._episode.ground_truth)
         )
-        reward = grader_score
+        confidence_bonus = 0.1 if abs(action.confidence - grader_score) < 0.15 else 0.0
+        illegal_penalty = -0.2 if action.action_type not in self._episode.task.legal_actions else 0.0
+        step_penalty = -0.1 * (self.step_count - 1) if self.step_count > 1 else 0.0
+        pre_clamp = grader_score + confidence_bonus + illegal_penalty + step_penalty
+        reward = self._bound_score(pre_clamp)
 
-        if abs(action.confidence - grader_score) < 0.15:
-            reward += 0.1
-        if action.action_type not in self._episode.task.legal_actions:
-            reward -= 0.2
-        if self.step_count > 1:
-            reward -= 0.1 * (self.step_count - 1)
+        reward_model = FinancialReward(
+            value=reward,
+            grader_score=grader_score,
+            confidence_bonus=confidence_bonus,
+            illegal_action_penalty=illegal_penalty,
+            step_efficiency_penalty=step_penalty,
+        )
+        reward_breakdown = reward_model.model_dump()
 
-        reward = self._clamp_score(reward)
-        self._running_score = reward
-        self.total_score += reward
-        self.documents_processed += 1
-        self._done = True
+        self._episode_reward_sum += reward
+        self._running_score = self._episode_reward_sum / self.step_count
+        self._done = self.step_count >= self.max_steps
+
+        metadata: Dict[str, Any] = {
+            "task_name": self._episode.task.name,
+            "episode_id": self.episode_id,
+            "reward_breakdown": reward_breakdown,
+            "episode_phase": "complete" if self._done else "in_progress",
+        }
+        if self._include_debug_metadata():
+            metadata["ground_truth"] = self._episode.ground_truth
+
+        if self._done:
+            self.total_score += self._running_score
+            self.documents_processed += 1
 
         return FinancialObservation(
             document_id=self._episode.document_id,
@@ -148,14 +187,9 @@ class FinancialDocEnvironment:
             step_in_episode=self.step_count,
             max_steps=self.max_steps,
             running_score=self._running_score,
-            done=True,
+            done=self._done,
             reward=reward,
-            metadata={
-                "task_name": self._episode.task.name,
-                "episode_id": self.episode_id,
-                "grader_score": grader_score,
-                "ground_truth": self._episode.ground_truth,
-            },
+            metadata=metadata,
         )
 
     @property

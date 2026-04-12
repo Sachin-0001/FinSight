@@ -11,76 +11,122 @@ tags:
   - reinforcement-learning
   - document-analysis
 ---
-# Financial Document OpenEnv Environment
 
-Financial document analysis is a high-impact, real-world workflow where analysts and auditors repeatedly triage noisy statements, extract decision-critical KPIs, and flag compliance risks under uncertainty. This environment turns that workflow into a reproducible RL-style benchmark with structured observations, typed actions, deterministic graders, and partial-credit rewards that encourage both correctness and calibrated confidence.
+# Financial Document OpenEnv (FinSight)
 
-## Observation Space
+## Motivation (real-world utility)
 
-| field | type | description |
-|---|---|---|
-| document_id | str | Unique synthetic document identifier |
-| document_type | str | One of income_statement, balance_sheet, transaction_log |
-| content | str | Full synthetic financial document text |
-| task_description | str | Instruction for the current task |
-| task_difficulty | str | easy, medium, or hard |
-| legal_actions | List[str] | Allowed action_type values for current task |
-| step_in_episode | int | Current step index in episode |
-| max_steps | int | Maximum episode steps |
-| running_score | float | Partial score within episode |
-| done | bool | Whether episode is complete |
-| reward | Optional[float] | Reward from latest step |
-| metadata | Dict[str, Any] | Additional task and grading metadata |
+Financial operations teams spend large amounts of time on **transaction monitoring**, **management reporting (KPIs)**, and **disclosure / compliance review**. This environment turns those workflows into a **single Gym-style interface**: synthetic but structured documents, typed actions, **deterministic programmatic graders** (no LLM-as-judge), and **shaped rewards** so agents receive partial credit and penalties for miscalibration, illegal action types, and inefficient multi-step episodes.
 
-## Action Space
+## OpenEnv-style API (HTTP)
 
-| field | type | description |
-|---|---|---|
-| action_type | str | classify, extract_kpi, flag_issue, recommend |
-| value | str | Action payload (IDs, JSON, recommendation text) |
-| confidence | float | Confidence in [0.0, 1.0] |
-| reasoning | str | Short rationale |
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/reset` | Start an episode; returns initial observation (+ `metadata.episode_id`, `metadata.episode_seed`). |
+| `POST` | `/step` | Submit a `FinancialAction`; returns observation, `reward`, `done`, and `info` (see below). |
+| `POST` | `/state` | Body: `{"episode_id": "<id>"}` → `FinancialState` for an **active** episode. |
+| `GET` | `/state` | Deployment catalog (task list, version, active episode count). |
+| `GET` | `/health` | Liveness. |
 
-## Tasks
+**`info` field (step / reset responses):** mirrors partial-progress signal for learning and debugging:
 
-| name | difficulty | description | grader method |
-|---|---|---|---|
-| anomaly_classification | easy | Identify anomalous transaction IDs from log | F1 score over predicted vs ground-truth anomaly IDs |
-| kpi_extraction | medium | Extract revenue, gross_profit, net_income, ebitda | Mean of relative-accuracy scores per KPI with invalid JSON penalty |
-| compliance_assessment | hard | Flag compliance issue types with severities | Weighted precision/recall-style score on issue types + hallucination penalty |
+- `reward_breakdown`: `FinancialReward` dict — `grader_score`, `confidence_bonus`, `illegal_action_penalty`, `step_efficiency_penalty`, `value` (final clamped reward).
+- `episode_phase`: `awaiting_action` \| `in_progress` \| `complete` \| `terminal`.
+- `running_score`: mean reward so far in the episode.
+
+Set `FINANCIAL_ENV_DEBUG_METADATA=true` to include `ground_truth` in observation metadata (never use in production eval).
+
+## Typed models (`models.py`)
+
+- **`FinancialAction`** — `action_type`, `value`, `confidence`, `reasoning`, optional `metadata` (OpenEnv Action–compatible).
+- **`FinancialObservation`** — document payload, task spec, `legal_actions`, `step_in_episode`, `max_steps`, `running_score`, `done`, `reward`, `metadata` (OpenEnv Observation–compatible).
+- **`FinancialReward`** — explicit decomposition of the scalar reward in \([0,1]\).
+- **`FinancialState`** — cumulative stats plus current episode id / task / step count.
+
+## Observation space
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `document_id` | `str` | Synthetic document id |
+| `document_type` | `str` | `transaction_log`, `income_statement`, or `balance_sheet` |
+| `content` | `str` | Full document text |
+| `task_description` | `str` | Objective for this episode |
+| `task_difficulty` | `str` | `easy` \| `medium` \| `hard` |
+| `legal_actions` | `List[str]` | Allowed `action_type` values |
+| `step_in_episode` | `int` | Steps taken |
+| `max_steps` | `int` | Horizon (use `>1` for multi-step training) |
+| `running_score` | `float` | Mean reward in the episode so far |
+| `done` | `bool` | Terminal flag |
+| `reward` | `float \| null` | Last step reward (null on initial reset) |
+| `metadata` | `dict` | `episode_id`, `episode_seed`, `reward_breakdown`, etc. |
+
+## Action space
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action_type` | `str` | Must be one of `legal_actions` for the task |
+| `value` | `str` | Comma-separated IDs, KPI JSON, or issues JSON |
+| `confidence` | `float` | \([0,1]\); calibrated confidence vs grader feeds shaping |
+| `reasoning` | `str` | Short rationale (quality heuristic in grader) |
+
+## Tasks and graders
+
+| Task | Difficulty | Objective | Grader |
+|------|------------|-----------|--------|
+| `anomaly_classification` | easy | List anomalous transaction IDs | F1 on id sets + quality heuristics |
+| `kpi_extraction` | medium | JSON: revenue, gross_profit, net_income, ebitda | Per-KPI relative error bands + invalid JSON penalty |
+| `compliance_assessment` | hard | JSON issues: type + severity slugs | Weighted detection + false-positive / red-herring penalties |
+
+All task scores are **deterministic** given seed and action (see `tests/test_graders.py`).
+
+## Reward shaping (meaningful signal)
+
+1. **Grader score** in \([0,1]\) (partial credit per task).
+2. **+0.1** if \(\lvert \text{confidence} - \text{grader\_score}\rvert < 0.15\) (calibration).
+3. **−0.2** if `action_type` is not in `legal_actions`.
+4. **−0.1 × (step − 1)** for extra steps when `max_steps > 1` (efficiency).
+5. Final clamp to \([0,1]\). **`running_score`** is the mean of step rewards (trajectory signal over multiple steps).
 
 ## Setup
 
-### Local dev
+### Local
 
 ```bash
-cd financial_env
 pip install -r requirements.txt
-uvicorn server.app:app --reload --host 0.0.0.0 --port 7860
+uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
 ### Docker
 
 ```bash
 docker build -t financial-env .
-docker run -d -p 7860:7860 financial-env
+docker run -p 7860:7860 financial-env
 ```
 
-### Run baseline
+### Tests
 
 ```bash
-export API_BASE_URL="https://api-inference.huggingface.co/v1"
-export MODEL_NAME="meta-llama/Llama-3.1-8B-Instruct"
-export HF_TOKEN="your_token_here"
+pip install pytest
+PYTHONPATH=. pytest tests/
+```
+
+## Baseline inference (`inference.py`)
+
+Uses the **OpenAI** Python client against any OpenAI-compatible endpoint.
+
+```bash
 export FINANCIAL_ENV_BASE_URL="http://localhost:7860"
+export API_BASE_URL="https://api-inference.huggingface.co/v1"   # or https://api.openai.com/v1
+export MODEL_NAME="meta-llama/Llama-3.1-8B-Instruct"
+export OPENAI_API_KEY="..."   # or HF_TOKEN for Inference API
 python inference.py
 ```
 
-### HF Spaces deploy
+Stdout lines **`[START]`**, **`[STEP]`**, **`[END]`** follow the hackathon format; results are written to `results.json`.
 
-Push the entire repository to a Hugging Face Space configured with SDK: docker.
+**Reproducibility:** episodes are seeded server-side (`metadata.episode_seed`). Re-run with the same seed via stateless `/step` (`task_name` + `episode_seed`) for exact replay.
 
-## Example Loop
+## Client example
 
 ```python
 from client import FinancialDocEnv
@@ -88,14 +134,19 @@ from models import FinancialAction
 
 env = FinancialDocEnv("http://localhost:7860")
 obs = env.reset(task_name="anomaly_classification")
+state = env.episode_state()  # POST /state
 
 action = FinancialAction(
     action_type="classify",
     value="TX-101-03,TX-101-08",
     confidence=0.72,
-    reasoning="Two records show duplicate and 10x amount spike patterns.",
+    reasoning="Duplicate vendor pattern and threshold-hugging rows flagged.",
 )
 
-next_obs = env.step(action)
-print(next_obs["reward"], next_obs["done"])
+nxt = env.step(action)
+print(nxt["reward"], nxt["done"], nxt.get("info", {}))
 ```
+
+## `openenv.yaml`
+
+Manifest includes `spec_version`, `type: space`, `runtime: fastapi`, `app`, `port`, and enumerated tasks for `openenv validate`.
