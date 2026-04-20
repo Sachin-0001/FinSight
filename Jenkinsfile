@@ -4,6 +4,8 @@ pipeline {
     environment {
         DOCKER_IMAGE = 'financial-env'
         APP_PORT     = '7860'
+        VENV_DIR     = "${WORKSPACE}/.venv"
+        PATH         = "${WORKSPACE}/.venv/bin:${PATH}"
     }
 
     stages {
@@ -19,6 +21,9 @@ pipeline {
             steps {
                 echo 'Installing Python dependencies...'
                 sh '''
+                    set -eux
+                    python3 -m venv "${VENV_DIR}"
+                    python -m pip install --upgrade pip
                     pip install -r requirements.txt
                 '''
             }
@@ -28,6 +33,7 @@ pipeline {
             steps {
                 echo 'Running tests...'
                 sh '''
+                    set -eux
                     pip install pytest
                     pytest tests/ -v
                 '''
