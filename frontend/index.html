@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinSight Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --card: #111936;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --warn: #f2cc60;
+      --text: #e6edf3;
+      --muted: #9da7b3;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(circle at top right, #1a2450, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    .wrap {
+      max-width: 1000px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card {
+      background: color-mix(in oklab, var(--card), black 10%);
+      border: 1px solid #273043;
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+    }
+
+    h1 { margin: 0 0 8px; font-size: 1.5rem; }
+    p { margin: 0; color: var(--muted); }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    select, button {
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.95rem;
+    }
+
+    button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #1f6feb, #1158c7);
+      border: none;
+      font-weight: 600;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: 1px solid #2d3748;
+      background: #0d1323;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+      background: var(--warn);
+    }
+
+    .dot.ok { background: var(--ok); }
+
+    .kv {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      background: #0b1220;
+      border: 1px solid #263247;
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .metric small { color: var(--muted); display: block; }
+    .metric strong { font-size: 1.05rem; }
+
+    pre {
+      margin: 0;
+      max-height: 300px;
+      overflow: auto;
+      background: #0b1220;
+      border: 1px solid #263247;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+
+    .output-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    @media (max-width: 900px) {
+      pre {
+        max-height: 45vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <h1>FinSight Frontend</h1>
+      <p>Simple UI connected to your backend via <code>/api</code> proxy.</p>
+
+      <div class="row">
+        <span class="pill">
+          <span id="healthDot" class="dot"></span>
+          Backend status: <span id="healthText">checking...</span>
+        </span>
+        <button id="refreshBtn">Refresh Status</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin:0 0 8px; font-size:1.15rem;">Try a Task</h2>
+      <p>Create an episode using your backend <code>/reset</code> endpoint.</p>
+
+      <div class="row">
+        <label for="task">Task:</label>
+        <select id="task">
+          <option value="anomaly_classification">anomaly_classification</option>
+          <option value="kpi_extraction">kpi_extraction</option>
+          <option value="compliance_assessment">compliance_assessment</option>
+        </select>
+        <button id="resetBtn">Create Episode</button>
+      </div>
+
+      <div class="kv">
+        <div class="metric"><small>Episode ID</small><strong id="episodeId">-</strong></div>
+        <div class="metric"><small>Task</small><strong id="taskName">-</strong></div>
+        <div class="metric"><small>Difficulty</small><strong id="difficulty">-</strong></div>
+        <div class="metric"><small>Max Steps</small><strong id="maxSteps">-</strong></div>
+      </div>
+    </section>
+
+    <section class="card output-card">
+      <h2 style="margin:0 0 8px; font-size:1.15rem;">Latest Backend Response</h2>
+      <pre id="output">Waiting for response...</pre>
+    </section>
+  </main>
+
+  <script>
+    const healthDot = document.getElementById('healthDot');
+    const healthText = document.getElementById('healthText');
+    const output = document.getElementById('output');
+
+    const episodeId = document.getElementById('episodeId');
+    const taskName = document.getElementById('taskName');
+    const difficulty = document.getElementById('difficulty');
+    const maxSteps = document.getElementById('maxSteps');
+
+    const pretty = (obj) => JSON.stringify(obj, null, 2);
+
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/health');
+        if (!res.ok) throw new Error('health check failed');
+        const data = await res.json();
+        healthDot.classList.add('ok');
+        healthText.textContent = data.status || 'healthy';
+      } catch (e) {
+        healthDot.classList.remove('ok');
+        healthText.textContent = 'unreachable';
+      }
+    }
+
+    async function refreshStateView() {
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        output.textContent = pretty(data);
+      } catch (e) {
+        output.textContent = `Error loading state: ${e.message}`;
+      }
+    }
+
+    async function createEpisode() {
+      const task = document.getElementById('task').value;
+      const btn = document.getElementById('resetBtn');
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+
+      try {
+        const res = await fetch('/api/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_name: task, max_steps: 1 })
+        });
+
+        const data = await res.json();
+        output.textContent = pretty(data);
+
+        const md = (data && data.metadata) || {};
+        episodeId.textContent = md.episode_id || '-';
+        taskName.textContent = md.task_name || task;
+        difficulty.textContent = md.difficulty || data.task_difficulty || '-';
+        maxSteps.textContent = data.max_steps ?? '-';
+
+      } catch (e) {
+        output.textContent = `Error creating episode: ${e.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Episode';
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', async () => {
+      await checkHealth();
+      await refreshStateView();
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', createEpisode);
+
+    checkHealth();
+    refreshStateView();
+  </script>
+</body>
+</html>

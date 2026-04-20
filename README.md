@@ -103,6 +103,17 @@ docker build -t financial-env .
 docker run -p 7860:7860 financial-env
 ```
 
+### Docker Compose (Backend + Frontend)
+
+```bash
+docker compose up --build
+```
+
+- Frontend UI: `http://localhost:8090`
+- Backend API: `http://localhost:7861`
+
+The frontend proxies backend calls via `/api` (for example, `/api/health`, `/api/state`, `/api/reset`).
+
 ### Tests
 
 ```bash
