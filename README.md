@@ -114,6 +114,51 @@ docker compose up --build
 
 The frontend proxies backend calls via `/api` (for example, `/api/health`, `/api/state`, `/api/reset`).
 
+### Minikube (Kubernetes, 3 replicas)
+
+This repo includes a Minikube-ready manifest at `k8s/finsight-minikube.yaml` with:
+
+- `backend` Deployment: **3 replicas**
+- `frontend` Deployment: **3 replicas**
+- `backend` ClusterIP Service on port `7860`
+- `frontend` NodePort Service on port `30080`
+
+Quick deploy:
+
+```bash
+./k8s/deploy_minikube.sh
+```
+
+Manual deploy:
+
+```bash
+minikube start
+minikube image build -t finsight-backend:local .
+minikube image build -t finsight-frontend:local ./frontend
+kubectl apply -f k8s/finsight-minikube.yaml
+kubectl get pods
+minikube service frontend --url
+```
+
+Scale check:
+
+```bash
+kubectl get deploy backend frontend
+```
+
+Safe stop options:
+
+```bash
+# graceful stop (keeps Services/manifest)
+./k8s/stop_minikube.sh
+
+# full cleanup (delete all k8s objects from manifest)
+./k8s/stop_minikube.sh --delete
+
+# also stop minikube VM/container
+./k8s/stop_minikube.sh --stop-minikube
+```
+
 ### Tests
 
 ```bash
