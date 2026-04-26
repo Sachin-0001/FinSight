@@ -6,6 +6,8 @@ pipeline {
         APP_PORT     = '7860'
         VENV_DIR     = "${WORKSPACE}/.venv"
         PATH         = "${WORKSPACE}/.venv/bin:${PATH}"
+        TERRAFORM_DIR = "${WORKSPACE}/infra/terraform"
+        RUN_TERRAFORM_PLAN = "false"
     }
 
     stages {
@@ -45,6 +47,22 @@ pipeline {
                 echo 'Building Docker image...'
                 sh '''
                     docker build -t ${DOCKER_IMAGE}:latest .
+                '''
+            }
+        }
+
+        stage('Terraform Plan') {
+            when {
+                expression {
+                    return fileExists('infra/terraform') && env.RUN_TERRAFORM_PLAN == 'true'
+                }
+            }
+            steps {
+                echo 'Running Terraform init + plan...'
+                sh '''
+                    set -eux
+                    terraform -chdir=${TERRAFORM_DIR} init -input=false
+                    terraform -chdir=${TERRAFORM_DIR} plan -input=false -no-color
                 '''
             }
         }

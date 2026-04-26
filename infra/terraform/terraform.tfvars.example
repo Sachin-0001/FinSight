@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and edit if needed.
+kube_context       = "minikube"
+backend_image      = "finsight-backend:local"
+frontend_image     = "finsight-frontend:local"
+backend_replicas   = 3
+frontend_replicas  = 3
+frontend_node_port = 30080

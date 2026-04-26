@@ -159,6 +159,60 @@ Safe stop options:
 ./k8s/stop_minikube.sh --stop-minikube
 ```
 
+### Terraform quick win (Kubernetes resources on Minikube)
+
+This repo now includes Terraform config in `infra/terraform` to manage the same `backend` + `frontend` Deployments/Services currently defined in `k8s/finsight-minikube.yaml`.
+
+Build local images for Minikube first:
+
+```bash
+minikube start
+minikube image build -t finsight-backend:local .
+minikube image build -t finsight-frontend:local ./frontend
+```
+
+Apply Terraform:
+
+```bash
+cd infra/terraform
+cp terraform.tfvars.example terraform.tfvars
+terraform init
+terraform plan
+terraform apply -auto-approve
+```
+
+Or use helper scripts:
+
+```bash
+./infra/start.sh
+```
+
+Verify and open service:
+
+```bash
+kubectl get deploy,svc
+minikube service frontend --url
+```
+
+Destroy (when done):
+
+```bash
+cd infra/terraform
+terraform destroy -auto-approve
+```
+
+Or:
+
+```bash
+./infra/delete.sh
+```
+
+Notes:
+
+- Default context is `minikube` (override with `kube_context` in `terraform.tfvars`).
+- Images default to `finsight-backend:local` and `finsight-frontend:local`.
+- Keep using `k8s/finsight-minikube.yaml` if you want raw manifests; use Terraform when you need demonstrable IaC workflow.
+
 ### Tests
 
 ```bash
