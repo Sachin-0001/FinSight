@@ -3,7 +3,6 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = 'financial-env'
-        APP_PORT     = '7860'
         VENV_DIR     = "${WORKSPACE}/.venv"
         PATH         = "${WORKSPACE}/.venv/bin:${PATH}"
     }
@@ -53,12 +52,18 @@ pipeline {
             steps {
                 echo 'Starting the application container...'
                 sh '''
-                    docker stop ${DOCKER_IMAGE} || true
-                    docker rm   ${DOCKER_IMAGE} || true
+                    set -eu
+                    CONTAINER_NAME="${DOCKER_IMAGE}-${BUILD_NUMBER}"
+                    HOST_PORT="$(shuf -i 20000-29999 -n 1)"
+
+                    echo "${CONTAINER_NAME}" > .container_name
+                    echo "${HOST_PORT}" > .host_port
+
+                    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
                     docker run -d \
-                        --name ${DOCKER_IMAGE} \
-                        -p ${APP_PORT}:7860 \
-                        ${DOCKER_IMAGE}:latest
+                        --name "${CONTAINER_NAME}" \
+                        -p "${HOST_PORT}:7860" \
+                        "${DOCKER_IMAGE}:latest"
                 '''
             }
         }
@@ -67,8 +72,10 @@ pipeline {
             steps {
                 echo 'Checking application health...'
                 sh '''
+                    set -eu
+                    HOST_PORT="$(cat .host_port)"
                     sleep 5
-                    curl -sf http://localhost:${APP_PORT}/health
+                    curl -sf "http://localhost:${HOST_PORT}/health"
                     echo "App is up and healthy!"
                 '''
             }
@@ -78,8 +85,11 @@ pipeline {
             steps {
                 echo 'Stopping and removing container...'
                 sh '''
-                    docker stop ${DOCKER_IMAGE} || true
-                    docker rm   ${DOCKER_IMAGE} || true
+                    set -eu
+                    if [ -f .container_name ]; then
+                        CONTAINER_NAME="$(cat .container_name)"
+                        docker rm -f "${CONTAINER_NAME}" || true
+                    fi
                 '''
             }
         }
